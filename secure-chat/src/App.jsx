@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 import forge from 'node-forge';
 
--const socket = io('http://localhost:5000');
 + const socket = io('http://securechat-production.up.railway.app');
 
 const generateKeyPair = () =>
