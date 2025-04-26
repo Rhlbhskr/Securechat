@@ -1,61 +1,93 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
+import React, { useEffect, useState } from 'react';
+import io from 'socket.io-client';
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-  },
-});
+const socket = io('https://securechat-production.up.railway.app'); // Make sure it's HTTPS
 
-app.use(cors());
-app.use(express.json());
+let keyPair: { publicKey: CryptoKey; privateKey: CryptoKey } | null = null;
 
-const users = new Map(); // socket.id -> { username, publicKey }
+const generateKeyPair = async () => {
+  const keys = await window.crypto.subtle.generateKey(
+    {
+      name: "RSA-OAEP",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["encrypt", "decrypt"]
+  );
+  return keys;
+};
 
-io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}`);
+const exportPublicKey = async (key: CryptoKey) => {
+  const exported = await window.crypto.subtle.exportKey("spki", key);
+  return btoa(String.fromCharCode(...new Uint8Array(exported)));
+};
 
-  socket.on('register', ({ username, publicKey }) => {
-    users.set(socket.id, { username, publicKey });
-    console.log(`${username} registered with socket ${socket.id}`);
-  });
+const encryptMessage = async (publicKey: CryptoKey, message: string) => {
+  const encoded = new TextEncoder().encode(message);
+  const ciphertext = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, encoded);
+  return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+};
 
-  socket.on('get-users', () => {
-    const publicKeys = [];
-    users.forEach((value, id) => {
-      if (id !== socket.id) {
-        publicKeys.push({
-          socketId: id,
-          username: value.username,
-          publicKey: value.publicKey,
-        });
+const decryptMessage = async (privateKey: CryptoKey, ciphertext: string) => {
+  const decoded = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+  const plaintext = await window.crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, decoded);
+  return new TextDecoder().decode(plaintext);
+};
+
+const App = () => {
+  const [users, setUsers] = useState<string[]>([]);
+  const [messages, setMessages] = useState<string[]>([]);
+  const [messageInput, setMessageInput] = useState('');
+
+  useEffect(() => {
+    const setup = async () => {
+      keyPair = await generateKeyPair();
+      const exportedPublicKey = await exportPublicKey(keyPair.publicKey);
+      socket.emit('join', exportedPublicKey);
+    };
+    setup();
+
+    socket.on('user-list', (userList: string[]) => {
+      setUsers(userList);
+    });
+
+    socket.on('receive-message', async ({ ciphertext }: { ciphertext: string }) => {
+      if (keyPair?.privateKey) {
+        const decrypted = await decryptMessage(keyPair.privateKey, ciphertext);
+        setMessages(prev => [...prev, decrypted]);
       }
     });
-    socket.emit('users-list', publicKeys);
-  });
+  }, []);
 
-  socket.on('typing', (to) => {
-    if (to) {
-      io.to(to).emit('user-typing', { from: socket.id });
-    }
-  });
+  const handleSend = async () => {
+    if (messageInput.trim() === '') return;
+    // Assume server already knows the other user's public key somehow
+    // You might need to fetch recipient's public key first here
+    socket.emit('send-message', { message: messageInput });
+    setMessageInput('');
+  };
 
-  socket.on('send-message', ({ to, encryptedMessage, timestamp }) => {
-    io.to(to).emit('receive-message', {
-      from: socket.id,
-      encryptedMessage,
-      timestamp,
-    });
-  });
+  return (
+    <div>
+      <h1>Secure Chat</h1>
+      <div>
+        <h2>Online Users:</h2>
+        <ul>{users.map((user, idx) => <li key={idx}>{user}</li>)}</ul>
+      </div>
+      <div>
+        <h2>Messages:</h2>
+        <ul>{messages.map((msg, idx) => <li key={idx}>{msg}</li>)}</ul>
+      </div>
+      <input
+        value={messageInput}
+        onChange={e => setMessageInput(e.target.value)}
+        placeholder="Type your message"
+      />
+      <button onClick={handleSend}>Send</button>
+    </div>
+  );
+};
 
-  socket.on('disconnect', () => {
-    users.delete(socket.id);
-    console.log(`User disconnected: ${socket.id}`);
-  });
-});
-
-server.listen(5000, () => console.log('Server running on http://localhost:5000'));
+export default App;
