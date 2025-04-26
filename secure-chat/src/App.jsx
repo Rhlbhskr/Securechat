@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 import forge from 'node-forge';
 
 const socket = io('http://localhost:5000');
-+ const socket = io('https://secure-chat-backend.up.railway.app');
+
 const generateKeyPair = () =>
   new Promise((resolve) => {
     forge.pki.rsa.generateKeyPair({ bits: 2048, workers: 2 }, (err, keypair) => {
