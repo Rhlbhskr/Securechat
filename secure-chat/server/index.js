@@ -1,93 +1,71 @@
-import React, { useEffect, useState } from 'react';
-import io from 'socket.io-client';
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
 
-const socket = io('https://securechat-production.up.railway.app'); // Make sure it's HTTPS
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*', // Allow all for now, you can lock it down later
+  },
+});
 
-let keyPair: { publicKey: CryptoKey; privateKey: CryptoKey } | null = null;
+const users = {}; // userId -> publicKey
 
-const generateKeyPair = async () => {
-  const keys = await window.crypto.subtle.generateKey(
+io.on('connection', (socket) => {
+  console.log(`New connection: ${socket.id}`);
+
+  socket.on('join', (publicKey) => {
+    users[socket.id] = publicKey;
+    console.log(`User ${socket.id} joined with public key`);
+    io.emit('user-list', Object.keys(users));
+  });
+
+  socket.on('send-message', async ({ message, toSocketId }) => {
+    const recipientPublicKey = users[toSocketId];
+    if (!recipientPublicKey) {
+      console.error('Recipient not found');
+      return;
+    }
+
+    try {
+      // Encrypt the message with recipient's public key
+      const encryptedMessage = await encryptMessageWithPublicKey(recipientPublicKey, message);
+
+      io.to(toSocketId).emit('receive-message', { ciphertext: encryptedMessage });
+    } catch (error) {
+      console.error('Encryption failed:', error);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`User ${socket.id} disconnected`);
+    delete users[socket.id];
+    io.emit('user-list', Object.keys(users));
+  });
+});
+
+// Helper function to encrypt with recipient's public key
+async function encryptMessageWithPublicKey(publicKeyPem, message) {
+  const crypto = require('crypto');
+
+  // Convert PEM publicKey back to usable key
+  const publicKeyBuffer = Buffer.from(publicKeyPem, 'base64');
+
+  const encrypted = crypto.publicEncrypt(
     {
-      name: "RSA-OAEP",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
+      key: publicKeyBuffer,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
     },
-    true,
-    ["encrypt", "decrypt"]
+    Buffer.from(message)
   );
-  return keys;
-};
 
-const exportPublicKey = async (key: CryptoKey) => {
-  const exported = await window.crypto.subtle.exportKey("spki", key);
-  return btoa(String.fromCharCode(...new Uint8Array(exported)));
-};
+  return encrypted.toString('base64');
+}
 
-const encryptMessage = async (publicKey: CryptoKey, message: string) => {
-  const encoded = new TextEncoder().encode(message);
-  const ciphertext = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, encoded);
-  return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
-};
-
-const decryptMessage = async (privateKey: CryptoKey, ciphertext: string) => {
-  const decoded = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
-  const plaintext = await window.crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, decoded);
-  return new TextDecoder().decode(plaintext);
-};
-
-const App = () => {
-  const [users, setUsers] = useState<string[]>([]);
-  const [messages, setMessages] = useState<string[]>([]);
-  const [messageInput, setMessageInput] = useState('');
-
-  useEffect(() => {
-    const setup = async () => {
-      keyPair = await generateKeyPair();
-      const exportedPublicKey = await exportPublicKey(keyPair.publicKey);
-      socket.emit('join', exportedPublicKey);
-    };
-    setup();
-
-    socket.on('user-list', (userList: string[]) => {
-      setUsers(userList);
-    });
-
-    socket.on('receive-message', async ({ ciphertext }: { ciphertext: string }) => {
-      if (keyPair?.privateKey) {
-        const decrypted = await decryptMessage(keyPair.privateKey, ciphertext);
-        setMessages(prev => [...prev, decrypted]);
-      }
-    });
-  }, []);
-
-  const handleSend = async () => {
-    if (messageInput.trim() === '') return;
-    // Assume server already knows the other user's public key somehow
-    // You might need to fetch recipient's public key first here
-    socket.emit('send-message', { message: messageInput });
-    setMessageInput('');
-  };
-
-  return (
-    <div>
-      <h1>Secure Chat</h1>
-      <div>
-        <h2>Online Users:</h2>
-        <ul>{users.map((user, idx) => <li key={idx}>{user}</li>)}</ul>
-      </div>
-      <div>
-        <h2>Messages:</h2>
-        <ul>{messages.map((msg, idx) => <li key={idx}>{msg}</li>)}</ul>
-      </div>
-      <input
-        value={messageInput}
-        onChange={e => setMessageInput(e.target.value)}
-        placeholder="Type your message"
-      />
-      <button onClick={handleSend}>Send</button>
-    </div>
-  );
-};
-
-export default App;
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
