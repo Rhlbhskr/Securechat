@@ -2,12 +2,7 @@ import React, { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 import forge from 'node-forge';
 
-const socket = io('https://securechat-production.up.railway.app', {
-  transports: ['websocket'],
-  secure: true,
-  rejectUnauthorized: false,
-});
-
+const socket = io('https://securechat-production.up.railway.app', { transports: ['websocket'] });
 
 const generateKeyPair = () =>
   new Promise((resolve) => {
@@ -39,14 +34,6 @@ function App() {
       const decrypted = privateKey.decrypt(forge.util.decode64(encryptedMessage), 'RSA-OAEP');
       setChat((prev) => [...prev, { from, text: decrypted, timestamp }]);
     });
-
-    socket.on('connect', () => {
-  console.log('Socket connected: ', socket.id);
-});
-
-socket.on('connect_error', (err) => {
-  console.error('Connection error:', err);
-});
 
     socket.on('user-typing', ({ from }) => {
       if (userMap[from]) {
