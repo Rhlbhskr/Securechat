@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 import forge from 'node-forge';
 
-const socket = io('https://securechat-production.up.railway.app', { transports: ['websocket'] });
+const socket = io('wss://securechat-production.up.railway.app', {
+  transports: ['websocket'],
+  secure: true,
+});
 
 
 const generateKeyPair = () =>
