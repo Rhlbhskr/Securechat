@@ -7,65 +7,71 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*', // Allow all for now, you can lock it down later
+    origin: '*',
   },
 });
 
-const users = {}; // userId -> publicKey
+app.use(cors());
+app.use(express.json());
+
+const users = new Map();
 
 io.on('connection', (socket) => {
-  console.log(`New connection: ${socket.id}`);
+  console.log(`User connected: ${socket.id}`);
 
-  socket.on('join', (publicKey) => {
-    users[socket.id] = publicKey;
-    console.log(`User ${socket.id} joined with public key`);
-    io.emit('user-list', Object.keys(users));
+  socket.on('register', ({ username, publicKey }) => {
+    users.set(socket.id, { username, publicKey });
+    console.log(`${username} registered with socket ${socket.id}`);
+
+    // 🚨 Send updated users list to everyone
+    io.emit('users-list', Array.from(users, ([socketId, value]) => ({
+      socketId,
+      username: value.username,
+      publicKey: value.publicKey,
+    })));
   });
 
-  socket.on('send-message', async ({ message, toSocketId }) => {
-    const recipientPublicKey = users[toSocketId];
-    if (!recipientPublicKey) {
-      console.error('Recipient not found');
-      return;
-    }
+  socket.on('get-users', () => {
+    const publicKeys = [];
+    users.forEach((value, id) => {
+      if (id !== socket.id) {
+        publicKeys.push({
+          socketId: id,
+          username: value.username,
+          publicKey: value.publicKey,
+        });
+      }
+    });
+    socket.emit('users-list', publicKeys);
+  });
 
-    try {
-      // Encrypt the message with recipient's public key
-      const encryptedMessage = await encryptMessageWithPublicKey(recipientPublicKey, message);
-
-      io.to(toSocketId).emit('receive-message', { ciphertext: encryptedMessage });
-    } catch (error) {
-      console.error('Encryption failed:', error);
+  socket.on('typing', (to) => {
+    if (to) {
+      io.to(to).emit('user-typing', socket.id);
     }
+  });
+
+  socket.on('send-message', ({ to, encryptedMessage, timestamp }) => {
+    io.to(to).emit('receive-message', {
+      from: socket.id,
+      encryptedMessage,
+      timestamp,
+    });
   });
 
   socket.on('disconnect', () => {
-    console.log(`User ${socket.id} disconnected`);
-    delete users[socket.id];
-    io.emit('user-list', Object.keys(users));
+    users.delete(socket.id);
+    console.log(`User disconnected: ${socket.id}`);
+
+    // 🚨 After disconnection, update user list again
+    io.emit('users-list', Array.from(users, ([socketId, value]) => ({
+      socketId,
+      username: value.username,
+      publicKey: value.publicKey,
+    })));
   });
 });
-
-// Helper function to encrypt with recipient's public key
-async function encryptMessageWithPublicKey(publicKeyPem, message) {
-  const crypto = require('crypto');
-
-  // Convert PEM publicKey back to usable key
-  const publicKeyBuffer = Buffer.from(publicKeyPem, 'base64');
-
-  const encrypted = crypto.publicEncrypt(
-    {
-      key: publicKeyBuffer,
-      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-      oaepHash: "sha256",
-    },
-    Buffer.from(message)
-  );
-
-  return encrypted.toString('base64');
-}
-
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(process.env.PORT || 5000, () => {
+  console.log(`Server running on port ${process.env.PORT || 5000}`);
 });
+
