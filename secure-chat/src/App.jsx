@@ -40,6 +40,14 @@ function App() {
       setChat((prev) => [...prev, { from, text: decrypted, timestamp }]);
     });
 
+    socket.on('connect', () => {
+  console.log('Socket connected: ', socket.id);
+});
+
+socket.on('connect_error', (err) => {
+  console.error('Connection error:', err);
+});
+
     socket.on('user-typing', ({ from }) => {
       if (userMap[from]) {
         setTypingStatus(`${userMap[from]} is typing...`);
