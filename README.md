@@ -56,12 +56,6 @@ Users can chat with each other in real-time with **end-to-end encrypted messages
    - Frontend at: `http://localhost:5173`
    - Backend running at: `http://localhost:5000`
 
----
-
-## 🌍 Live Demo
-
-> Frontend: https://securechat-4kb4.vercel.app/  
-> Backend: Hosted on Vercel
 
 ---
 ## 📚 Future Improvements
